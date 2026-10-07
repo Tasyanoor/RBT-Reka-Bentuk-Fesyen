@@ -1,0 +1,959 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Boling RBT Fesyen Tingkatan 1</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Three.js and Cannon.js (for physics) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
+    
+    <!-- MediaPipe Hands -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #1a202c; font-family: 'Inter', sans-serif; color: white;}
+        #game-container { position: relative; width: 100vw; height: 100vh; }
+        #canvas-container { width: 100%; height: 100%; display: block; }
+        
+        /* UI Overlay Layer */
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; display: flex; flex-direction: column; justify-content: space-between;}
+        .pointer-events-auto { pointer-events: auto; }
+        
+        /* Webcam Feed */
+        #video-element {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 240px;
+            height: 180px;
+            border-radius: 12px;
+            border: 3px solid #4f46e5;
+            object-fit: cover;
+            transform: scaleX(-1); /* Mirror */
+            z-index: 20;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+            display: none; /* Hidden until started */
+        }
+        
+        /* Hand Landmark Canvas (overlay on video) */
+        #output-canvas {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            width: 240px;
+            height: 180px;
+            border-radius: 12px;
+            z-index: 21;
+            transform: scaleX(-1);
+            pointer-events: none;
+            display: none;
+        }
+
+        /* Screens */
+        .screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(15, 23, 42, 0.9);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 50;
+            pointer-events: auto;
+            backdrop-filter: blur(5px);
+        }
+        
+        .hidden { display: none !important; }
+
+        /* Custom UI Elements */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #6366f1, #4f46e5);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 9999px;
+            font-weight: bold;
+            font-size: 1.125rem;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            border: none;
+            outline: none;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(99, 102, 241, 0.5); }
+        .btn:active { transform: translateY(0); }
+
+        .btn-option {
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid transparent;
+            width: 100%;
+            margin-bottom: 10px;
+            padding: 15px;
+            border-radius: 12px;
+            text-align: center;
+            transition: all 0.3s ease;
+            font-size: 1.1rem;
+        }
+        .btn-option:hover:not(:disabled) { background: rgba(255, 255, 255, 0.3); border-color: #a5b4fc; }
+        .btn-option.correct { background: #10b981; border-color: #059669; }
+        .btn-option.wrong { background: #ef4444; border-color: #b91c1c; }
+
+        /* In-Game HUD */
+        .hud-top {
+            display: flex;
+            justify-content: space-between;
+            padding: 20px;
+            pointer-events: none;
+        }
+        .hud-stat {
+            background: rgba(0, 0, 0, 0.6);
+            padding: 10px 20px;
+            border-radius: 12px;
+            font-size: 1.2rem;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        /* Question Overlay */
+        #question-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 80%;
+            max-width: 600px;
+            z-index: 30;
+            pointer-events: auto;
+        }
+
+        /* Loading Spinner */
+        .loader {
+            border: 5px solid #f3f3f3; border-top: 5px solid #6366f1;
+            border-radius: 50%; width: 50px; height: 50px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* Swipe Indicator */
+        #gesture-hint {
+            position: absolute;
+            bottom: 40%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.7);
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 1.2rem;
+            display: none;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { opacity: 0.7; transform: translateX(-50%) scale(1); }
+            50% { opacity: 1; transform: translateX(-50%) scale(1.05); }
+            100% { opacity: 0.7; transform: translateX(-50%) scale(1); }
+        }
+
+        /* Heart Icon */
+        .heart { color: #ef4444; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <!-- WebGL Canvas for 3D Game -->
+    <div id="canvas-container"></div>
+    
+    <!-- MediaPipe Video and Output (Hidden initially) -->
+    <video id="video-element" autoplay playsinline></video>
+    <canvas id="output-canvas"></canvas>
+
+    <!-- UI Layer -->
+    <div id="ui-layer">
+        <!-- HUD -->
+        <div class="hud-top hidden" id="game-hud">
+            <div class="hud-stat text-yellow-400">
+                <span>⭐ Skor:</span> <span id="score-display">0</span>
+            </div>
+            <div class="hud-stat text-blue-400">
+                <span>Tahap:</span> <span id="level-display">1</span>
+            </div>
+            <div class="hud-stat">
+                <span>Masa:</span> <span id="time-display">60</span>s
+            </div>
+            <div class="hud-stat text-red-400">
+                <span>Nyawa:</span> <span id="lives-display">❤️❤️❤️</span>
+            </div>
+        </div>
+        
+        <div id="gesture-hint" class="text-white font-bold tracking-wide">
+            Genggam ✊, Tarik Belakang, dan Lepas ✋ ke hadapan!
+        </div>
+    </div>
+
+    <!-- Start Screen -->
+    <div id="start-screen" class="screen">
+        <div class="glass-panel text-center max-w-lg w-full mx-4">
+            <h1 class="text-5xl font-extrabold mb-2 text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">RBT Boling</h1>
+            <h2 class="text-2xl font-bold mb-6 text-gray-200">Aplikasi Teknologi: Reka Bentuk Fesyen</h2>
+            <p class="text-gray-300 mb-8 text-lg">Jawab soalan dengan menjatuhkan pin! Gunakan tangan anda melalui webcam untuk membaling bola boling.</p>
+            
+            <div class="bg-gray-800 p-4 rounded-lg mb-8 text-left text-sm text-gray-300">
+                <h3 class="font-bold text-white mb-2">Cara Bermain:</h3>
+                <ol class="list-decimal pl-5 space-y-1">
+                    <li>Pilih jawapan yang betul pada skrin.</li>
+                    <li>Sediakan tangan kanan di hadapan kamera.</li>
+                    <li><strong>Genggam tangan (✊)</strong> untuk pegang bola.</li>
+                    <li>Tarik tangan ke belakang, kemudian <strong>hayun ke depan dan buka tangan (✋)</strong> untuk melempar.</li>
+                </ol>
+            </div>
+
+            <div id="loading-camera" class="flex flex-col items-center justify-center space-y-4 mb-4">
+                <div class="loader"></div>
+                <p>Memuatkan model tangan dan kamera...</p>
+            </div>
+            
+            <button id="start-btn" class="btn w-full hidden">Mula Permainan</button>
+        </div>
+    </div>
+
+    <!-- Question Screen (Overlay during game) -->
+    <div id="question-overlay" class="glass-panel hidden flex-col items-center">
+        <div class="w-full text-center mb-6">
+            <h2 class="text-xl font-bold text-indigo-300 mb-2">Soalan RBT (Tahap <span id="q-level">1</span>)</h2>
+            <p id="question-text" class="text-2xl font-semibold"></p>
+        </div>
+        <div id="options-container" class="w-full flex flex-col gap-2">
+            <!-- Options injected here -->
+        </div>
+    </div>
+
+    <!-- Game Over Screen -->
+    <div id="game-over-screen" class="screen hidden">
+        <div class="glass-panel text-center max-w-md w-full mx-4">
+            <h1 id="end-title" class="text-5xl font-extrabold mb-4 text-red-400">TAMAT PERMAINAN</h1>
+            <p class="text-xl mb-6">Skor Akhir Anda: <span id="final-score" class="font-bold text-yellow-400 text-3xl">0</span></p>
+            
+            <div class="bg-gray-800 p-4 rounded-lg mb-6">
+                <p class="text-gray-300">Tahap Dicapai: <span id="final-level" class="font-bold text-white">1</span></p>
+            </div>
+            
+            <button id="restart-btn" class="btn w-full">Main Semula</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    // --- Game Data (RBT Tingkatan 1: Reka Bentuk Fesyen) ---
+    const questionBank = [
+        // Level 1
+        { q: "Apakah definisi Reka Bentuk Fesyen?", options: ["Seni mengubah suai rekaan", "Proses atau bidang seni yang mengaplikasikan idea, estetik dan rekaan pakaian", "Penghasilan corak pada fabrik", "Cara pemakaian mengikut trend"], ans: 1 },
+        { q: "Antara berikut, yang manakah merupakan aksesori?", options: ["Baju Kurung", "Topi", "Seluar Slek", "Kemeja-T"], ans: 1 },
+        { q: "Apakah fungsi utama kasut dalam reka bentuk fesyen?", options: ["Menambah ketinggian", "Melindungi kaki dari kecederaan", "Menunjukkan status sosial", "Untuk hiasan semata-mata"], ans: 1 },
+        // Level 2
+        { q: "Bentuk badan manakah yang sesuai memakai pakaian berjalur menegak?", options: ["Bentuk Gempal", "Bentuk Kurus", "Bentuk Tinggi", "Bentuk Segi Tiga"], ans: 0 },
+        { q: "Warna apakah yang memberikan ilusi langsing kepada pemakai?", options: ["Putih", "Kuning", "Hitam (Gelap)", "Merah Jambu"], ans: 2 },
+        { q: "Elemen garisan apakah yang memberi kesan visual lebar dan gempal?", options: ["Garisan Menegak", "Garisan Mendatar", "Garisan Pepenjuru", "Garisan Melengkung"], ans: 1 },
+        // Level 3
+        { q: "Pilih teknik cantuman yang BUKAN menggunakan jahitan.", options: ["Kelim", "Lilit kemas", "Tampalan (Gam Fabrik)", "Jahitan Kia"], ans: 2 },
+        { q: "Alatan manakah yang digunakan untuk mengukur bahagian melengkung pada badan?", options: ["Pembaris lurus", "Pita ukur", "Pembaris L", "Tolok jahitan"], ans: 1 },
+        { q: "Apakah fungsi roda surih dan kertas karbon tukang jahit?", options: ["Memotong fabrik", "Memindahkan tanda pola ke fabrik", "Menjahit kelim", "Mengukur ukuran pinggang"], ans: 1 }
+    ];
+
+    // --- State Variables ---
+    let gameState = 'start'; // start, question, readyToBowl, bowling, result, gameover
+    let score = 0;
+    let level = 1;
+    let lives = 3;
+    let timeLeft = 60;
+    let timerInterval;
+    let currentQuestion = null;
+    let selectedAnswerIndex = -1;
+    let isHandGrabbed = false;
+    let lastHandZ = 0;
+    let throwVelocity = { x: 0, y: 0, z: 0 };
+    let handPositions = []; // Store recent hand positions for velocity calculation
+
+    // DOM Elements
+    const els = {
+        startScreen: document.getElementById('start-screen'),
+        startBtn: document.getElementById('start-btn'),
+        loadingCamera: document.getElementById('loading-camera'),
+        gameHud: document.getElementById('game-hud'),
+        questionOverlay: document.getElementById('question-overlay'),
+        questionText: document.getElementById('question-text'),
+        optionsContainer: document.getElementById('options-container'),
+        qLevel: document.getElementById('q-level'),
+        scoreDisplay: document.getElementById('score-display'),
+        levelDisplay: document.getElementById('level-display'),
+        timeDisplay: document.getElementById('time-display'),
+        livesDisplay: document.getElementById('lives-display'),
+        gameOverScreen: document.getElementById('game-over-screen'),
+        endTitle: document.getElementById('end-title'),
+        finalScore: document.getElementById('final-final-score'), // typo fix below
+        finalLevel: document.getElementById('final-level'),
+        restartBtn: document.getElementById('restart-btn'),
+        video: document.getElementById('video-element'),
+        outputCanvas: document.getElementById('output-canvas'),
+        gestureHint: document.getElementById('gesture-hint')
+    };
+
+    els.finalScore = document.getElementById('final-score');
+
+    // --- Three.js & Cannon.js Setup ---
+    let scene, camera, renderer;
+    let world; // Cannon physics world
+    let ballMesh, ballBody;
+    let pins = []; // Objects holding {mesh, body, originalPos}
+    let physicsBodies = []; // All objects to update
+    const PIN_COUNT = 10;
+    const ALLEY_LENGTH = 25;
+    
+    let isCameraReady = false;
+
+    function init3DEnvironment() {
+        const container = document.getElementById('canvas-container');
+
+        // 1. Three.js Setup
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a202c); // Match tailwind dark bg
+        scene.fog = new THREE.Fog(0x1a202c, 10, 40);
+
+        camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 2.5, 6); // Position behind the ball
+
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(5, 10, 5);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 1024;
+        dirLight.shadow.mapSize.height = 1024;
+        scene.add(dirLight);
+        
+        // Spot light above pins
+        const spotLight = new THREE.SpotLight(0xffa95c, 1);
+        spotLight.position.set(0, 10, -ALLEY_LENGTH/2);
+        spotLight.angle = Math.PI/4;
+        spotLight.penumbra = 0.5;
+        scene.add(spotLight);
+
+        // 2. Cannon.js Setup
+        world = new CANNON.World();
+        world.gravity.set(0, -9.82, 0); // Earth gravity
+        world.broadphase = new CANNON.NaiveBroadphase();
+        world.solver.iterations = 10;
+
+        // Materials
+        const physicsMaterial = new CANNON.Material("standard");
+        const physicsContactMaterial = new CANNON.ContactMaterial(
+            physicsMaterial, physicsMaterial, { friction: 0.1, restitution: 0.3 }
+        );
+        world.addContactMaterial(physicsContactMaterial);
+
+        // --- Build Scene Objects ---
+        createAlley(physicsMaterial);
+        createBall(physicsMaterial);
+        createPins(physicsMaterial);
+
+        // Event Listeners for Resize
+        window.addEventListener('resize', onWindowResize, false);
+
+        // Start Animation Loop
+        animate3D();
+    }
+
+    function createAlley(physMat) {
+        // Visual
+        const alleyGeo = new THREE.BoxGeometry(3, 0.2, ALLEY_LENGTH + 10);
+        // Wood texture simulation using basic material color
+        const alleyMat = new THREE.MeshStandardMaterial({ 
+            color: 0x8b5a2b, roughness: 0.4, metalness: 0.1
+        });
+        const alleyMesh = new THREE.Mesh(alleyGeo, alleyMat);
+        alleyMesh.position.set(0, -0.1, -ALLEY_LENGTH/2 + 3);
+        alleyMesh.receiveShadow = true;
+        scene.add(alleyMesh);
+
+        // Physics
+        const alleyShape = new CANNON.Box(new CANNON.Vec3(1.5, 0.1, (ALLEY_LENGTH + 10)/2));
+        const alleyBody = new CANNON.Body({ mass: 0, material: physMat });
+        alleyBody.addShape(alleyShape);
+        alleyBody.position.copy(alleyMesh.position);
+        world.addBody(alleyBody);
+        
+        // Gutters (Visual only for simplicity, let ball fall off alley)
+        const gutterGeo = new THREE.BoxGeometry(0.5, 0.1, ALLEY_LENGTH + 10);
+        const gutterMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
+        const gutterL = new THREE.Mesh(gutterGeo, gutterMat);
+        gutterL.position.set(-1.75, -0.15, -ALLEY_LENGTH/2 + 3);
+        scene.add(gutterL);
+        const gutterR = new THREE.Mesh(gutterGeo, gutterMat);
+        gutterR.position.set(1.75, -0.15, -ALLEY_LENGTH/2 + 3);
+        scene.add(gutterR);
+    }
+
+    function createBall(physMat) {
+        const radius = 0.25;
+        
+        // Visual
+        const geo = new THREE.SphereGeometry(radius, 32, 32);
+        // Create a marbled texture look programmatically
+        const mat = new THREE.MeshStandardMaterial({ 
+            color: 0x4f46e5, // Indigo
+            roughness: 0.2,
+            metalness: 0.5
+        });
+        ballMesh = new THREE.Mesh(geo, mat);
+        ballMesh.castShadow = true;
+        scene.add(ballMesh);
+
+        // Physics
+        const shape = new CANNON.Sphere(radius);
+        ballBody = new CANNON.Body({ 
+            mass: 5, // Heavy ball
+            material: physMat,
+            linearDamping: 0.1,
+            angularDamping: 0.1
+        });
+        ballBody.addShape(shape);
+        world.addBody(ballBody);
+
+        physicsBodies.push({ mesh: ballMesh, body: ballBody });
+        
+        resetBall();
+    }
+
+    function createPins(physMat) {
+        // Pin dimensions (simplified cylinder+sphere approach)
+        const radius = 0.12;
+        const height = 0.5;
+        const mass = 1.5;
+        
+        const pinGeo = new THREE.CylinderGeometry(radius*0.6, radius, height, 16);
+        const topGeo = new THREE.SphereGeometry(radius*0.6, 16, 16);
+        topGeo.translate(0, height/2, 0);
+        // Merge geometries loosely by putting in a group later, or just use simple shape
+        
+        const pinMat = new THREE.MeshStandardMaterial({ 
+            color: 0xffffff, roughness: 0.5, metalness: 0.1
+        });
+        
+        // Red stripe material
+        const stripeMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+
+        let pinId = 0;
+        // Arrange pins in a triangle
+        const startZ = -ALLEY_LENGTH + 2;
+        const spacing = 0.35;
+
+        for (let row = 0; row < 4; row++) {
+            for (let col = 0; col <= row; col++) {
+                const x = (col - row / 2) * spacing;
+                const z = startZ - row * (spacing * 0.866); // sqrt(3)/2
+
+                // Visual Group
+                const pinGroup = new THREE.Group();
+                
+                const bodyMesh = new THREE.Mesh(pinGeo, pinMat);
+                bodyMesh.position.y = height/2;
+                bodyMesh.castShadow = true;
+                pinGroup.add(bodyMesh);
+
+                const headMesh = new THREE.Mesh(topGeo, pinMat);
+                headMesh.castShadow = true;
+                pinGroup.add(headMesh);
+                
+                // Stripe
+                const stripeGeo = new THREE.CylinderGeometry(radius*0.8, radius*0.85, 0.05, 16);
+                const stripeMesh = new THREE.Mesh(stripeGeo, stripeMat);
+                stripeMesh.position.y = height * 0.7;
+                pinGroup.add(stripeMesh);
+
+                scene.add(pinGroup);
+
+                // Physics (Cylinder)
+                const shape = new CANNON.Cylinder(radius*0.6, radius, height, 10);
+                const body = new CANNON.Body({ mass: mass, material: physMat });
+                body.addShape(shape);
+                
+                // Rotation for Cannon Cylinder to match Three (Cannon cylinder is along Z by default)
+                const q = new CANNON.Quaternion();
+                q.setFromAxisAngle(new CANNON.Vec3(1,0,0), -Math.PI/2);
+                body.quaternion.copy(q);
+                
+                world.addBody(body);
+
+                const initialPos = new CANNON.Vec3(x, height/2 + 0.1, z); // slight drop
+                
+                pins.push({
+                    id: pinId++,
+                    mesh: pinGroup,
+                    body: body,
+                    initialPos: initialPos,
+                    isFallen: false
+                });
+                
+                physicsBodies.push({ mesh: pinGroup, body: body });
+            }
+        }
+        resetPins();
+    }
+
+    function resetBall() {
+        ballBody.velocity.set(0, 0, 0);
+        ballBody.angularVelocity.set(0, 0, 0);
+        ballBody.position.set(0, 0.5, 3); // Start pos
+        
+        // Reset visual instantly
+        ballMesh.position.copy(ballBody.position);
+        ballMesh.quaternion.copy(ballBody.quaternion);
+    }
+
+    function resetPins() {
+        pins.forEach(pin => {
+            pin.body.velocity.set(0, 0, 0);
+            pin.body.angularVelocity.set(0, 0, 0);
+            pin.body.position.copy(pin.initialPos);
+            // Reset rotation so it stands up
+            const q = new CANNON.Quaternion();
+            q.setFromAxisAngle(new CANNON.Vec3(1,0,0), -Math.PI/2);
+            pin.body.quaternion.copy(q);
+            pin.isFallen = false;
+            
+            pin.mesh.position.copy(pin.body.position);
+            pin.mesh.quaternion.copy(pin.body.quaternion);
+        });
+    }
+
+    function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    const clock = new THREE.Clock();
+    function animate3D() {
+        requestAnimationFrame(animate3D);
+
+        const delta = Math.min(clock.getDelta(), 0.1);
+        world.step(1/60, delta, 3);
+
+        // Sync physics to visual
+        for (let i = 0; i < physicsBodies.length; i++) {
+            physicsBodies[i].mesh.position.copy(physicsBodies[i].body.position);
+            physicsBodies[i].mesh.quaternion.copy(physicsBodies[i].body.quaternion);
+        }
+
+        // Camera follow ball slightly if rolling
+        if (gameState === 'bowling') {
+            const targetZ = Math.max(ballMesh.position.z + 4, -ALLEY_LENGTH/2);
+            camera.position.z = THREE.MathUtils.lerp(camera.position.z, targetZ, 0.05);
+            camera.position.x = THREE.MathUtils.lerp(camera.position.x, ballMesh.position.x * 0.5, 0.05);
+            camera.lookAt(ballMesh.position.x, 0, ballMesh.position.z - 5);
+            
+            // Check if ball has passed pins or fallen off
+            if (ballBody.position.y < -1 || ballBody.position.z < -ALLEY_LENGTH - 2) {
+                checkResult();
+            }
+        } else {
+            // Default camera position
+            camera.position.lerp(new THREE.Vector3(0, 2.5, 6), 0.1);
+            const targetRot = new THREE.Vector3(0,0,0);
+            camera.lookAt(targetRot);
+        }
+
+        renderer.render(scene, camera);
+    }
+
+    const canvasCtx = els.outputCanvas.getContext('2d');
+
+    function onResults(results) {
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, els.outputCanvas.width, els.outputCanvas.height);
+        
+        // Draw landmarks
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const landmarks = results.multiHandLandmarks[0];
+            
+            drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#4f46e5', lineWidth: 2});
+            drawLandmarks(canvasCtx, landmarks, {color: '#facc15', lineWidth: 1, radius: 2});
+
+            handleGesture(landmarks);
+        } else {
+            // Hand lost
+            if (isHandGrabbed && gameState === 'readyToBowl') {
+                 // Accidental release or moved out of frame, ignore for now to avoid false throws
+            }
+        }
+        canvasCtx.restore();
+    }
+
+    function calculateDistance(p1, p2) {
+        return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2) + Math.pow(p1.z - p2.z, 2));
+    }
+
+    function handleGesture(landmarks) {
+        if (gameState !== 'readyToBowl') return;
+
+        // Detect Grab (Fist) vs Open Hand
+        // Check distance between wrist (0) and finger tips (8, 12, 16, 20)
+        const wrist = landmarks[0];
+        const indexTip = landmarks[8];
+        const middleTip = landmarks[12];
+        const ringTip = landmarks[16];
+        const pinkyTip = landmarks[20];
+
+        // Normalizing distance based on hand size (wrist to middle finger mcp)
+        const handSize = calculateDistance(wrist, landmarks[9]);
+        
+        const d1 = calculateDistance(wrist, indexTip) / handSize;
+        const d2 = calculateDistance(wrist, middleTip) / handSize;
+        
+        // Thresholds determined via testing
+        const isClosed = (d1 < 1.5 && d2 < 1.5); 
+        
+        // Track Z (depth) for forward motion detection
+        // MediaPipe Z is relative to wrist, but we can use Y (vertical in camera = up/down)
+        // and X (horizontal). For "throwing forward", the hand usually moves UP and Y gets smaller 
+        // (origin is top left) or we use the bounding box size (z approximation).
+        // Let's use Y coordinate of wrist as a simple proxy for forward swing if camera is positioned normally.
+        
+        const currentY = wrist.y;
+        const currentX = wrist.x; // Note: mirrored camera
+        
+        // Store history for velocity
+        const now = performance.now();
+        handPositions.push({ x: currentX, y: currentY, time: now });
+        if (handPositions.length > 10) handPositions.shift();
+
+        if (isClosed) {
+            if (!isHandGrabbed) {
+                // Just grabbed the ball
+                isHandGrabbed = true;
+                ballMesh.material.color.setHex(0xfacc15); // Highlight ball to show grab
+                els.gestureHint.innerText = "Bagus! Hayun tangan ke hadapan dan buka tangan ✋ untuk lepas!";
+                handPositions = []; // reset tracking
+            }
+            // If grabbed, track movement but do nothing else yet
+        } else {
+            if (isHandGrabbed) {
+                // Hand was closed, now opened -> RELEASE
+                isHandGrabbed = false;
+                
+                // Calculate velocity based on recent positions
+                if (handPositions.length > 2) {
+                    const first = handPositions[0];
+                    const last = handPositions[handPositions.length - 1];
+                    const dt = (last.time - first.time) / 1000; // in seconds
+                    
+                    if (dt > 0) {
+                        // Delta Y (negative means moving UP in camera view, which we interpret as forward throw)
+                        const dy = last.y - first.y; 
+                        // Delta X (lateral movement) -> mapping mirrored X
+                        const dx = last.x - first.x;
+                        
+                        // Throw speed
+                        const speedZ = (dy / dt) * 15; // Tuning factor
+                        const speedX = (dx / dt) * 10;
+                        
+                        // Require a significant forward (upward in frame) motion
+                        if (speedZ < -3) { 
+                            throwBall(speedX, speedZ);
+                        } else {
+                            // Weak throw or drop, just reset
+                             els.gestureHint.innerText = "Hayunan terlalu perlahan. Cuba genggam dan hayun lebih kuat.";
+                             setTimeout(() => {
+                                 if(gameState === 'readyToBowl') els.gestureHint.innerText = "Genggam ✊, Tarik Belakang, dan Lepas ✋ ke hadapan!";
+                             }, 2000);
+                        }
+                    }
+                }
+                ballMesh.material.color.setHex(0x4f46e5); // Reset color
+            }
+        }
+    }
+
+    function initMediaPipe() {
+        const hands = new Hands({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }
+        });
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7
+        });
+        hands.onResults(onResults);
+
+        const cameraFeed = new Camera(els.video, {
+            onFrame: async () => {
+                await hands.send({image: els.video});
+            },
+            width: 480,
+            height: 360
+        });
+
+        cameraFeed.start().then(() => {
+            els.loadingCamera.classList.add('hidden');
+            els.startBtn.classList.remove('hidden');
+            isCameraReady = true;
+            
+            els.outputCanvas.width = 240;
+            els.outputCanvas.height = 180;
+            
+            console.log("Camera started");
+        }).catch(err => {
+            console.error("Camera error:", err);
+            els.loadingCamera.innerHTML = "<p class='text-red-500'>Ralat: Kamera tidak dijumpai. Sila benarkan akses kamera.</p>";
+        });
+    }
+
+    function throwBall(speedX, speedZ) {
+        gameState = 'bowling';
+        els.gestureHint.style.display = 'none';
+        
+        // Apply velocity to physics body
+        // Clamp values to prevent crazy throws
+        const zVel = Math.max(-25, Math.min(speedZ, -10)); // Force forward motion, min speed 10, max 25
+        const xVel = Math.max(-5, Math.min(speedX, 5));
+        
+        ballBody.velocity.set(-xVel, 0, zVel); // -xVel because camera is mirrored
+        // Add spin for realism
+        ballBody.angularVelocity.set(zVel*0.2, 0, xVel*0.5);
+    }
+
+    function checkResult() {
+        if (gameState !== 'bowling') return;
+        gameState = 'result';
+        
+        // Count fallen pins
+        let fallenCount = 0;
+        pins.forEach(pin => {
+            // If it moved significantly on Z or rotated (up vector changes)
+            const upVector = new THREE.Vector3(0, 1, 0);
+            const currentUp = upVector.clone().applyQuaternion(pin.mesh.quaternion);
+            
+            // If dot product with world UP is less than 0.8, it tipped over
+            if (currentUp.y < 0.8 || pin.body.position.y < 0) {
+                if (!pin.isFallen) {
+                    pin.isFallen = true;
+                    fallenCount++;
+                }
+            }
+        });
+
+        // Determine if they get the points based on question correctness
+        let earnedPoints = 0;
+        let resultMsg = "";
+        
+        if (selectedAnswerIndex === currentQuestion.ans) {
+            // Correct answer
+            if (fallenCount === 0) {
+                resultMsg = "Jawapan Betul, tetapi balingan tersasar!";
+                // Give small pity points
+                earnedPoints = 10;
+            } else {
+                resultMsg = `Hebat! Jawapan Betul & ${fallenCount} pin dijatuhkan!`;
+                earnedPoints = 100 * fallenCount;
+                if(fallenCount === 10) earnedPoints += 500; // Strike bonus
+            }
+        } else {
+            // Wrong answer
+            resultMsg = "Jawapan Salah! Tiada markah balingan.";
+            lives--;
+            updateHUD();
+            earnedPoints = 0;
+        }
+
+        score += earnedPoints;
+        updateHUD();
+        
+        showFeedback(resultMsg, earnedPoints, selectedAnswerIndex === currentQuestion.ans);
+
+        setTimeout(() => {
+            if (lives <= 0 || timeLeft <= 0) {
+                endGame();
+            } else {
+                nextRound();
+            }
+        }, 3000);
+    }
+
+    function showFeedback(msg, points, isCorrect) {
+        // Temporarily use question overlay for feedback
+        els.questionOverlay.classList.remove('hidden');
+        els.questionText.innerHTML = `
+            <div class="${isCorrect ? 'text-green-400' : 'text-red-400'} mb-2">${msg}</div>
+            <div class="text-3xl font-bold text-yellow-400">+${points} Skor</div>
+        `;
+        els.optionsContainer.innerHTML = '';
+    }
+
+    function startGame() {
+        els.startScreen.classList.add('hidden');
+        els.video.style.display = 'block';
+        els.outputCanvas.style.display = 'block';
+        els.gameHud.classList.remove('hidden');
+        
+        score = 0;
+        level = 1;
+        lives = 3;
+        timeLeft = 60;
+        updateHUD();
+        
+        clearInterval(timerInterval);
+        timerInterval = setInterval(() => {
+            timeLeft--;
+            updateHUD();
+            if (timeLeft <= 0) endGame();
+        }, 1000);
+
+        nextRound();
+    }
+
+    function nextRound() {
+        resetBall();
+        resetPins();
+        
+        // Update level based on score
+        if (score > 1000) level = 2;
+        if (score > 2500) level = 3;
+        
+        updateHUD();
+        
+        showQuestion();
+    }
+
+    function showQuestion() {
+        gameState = 'question';
+        els.questionOverlay.classList.remove('hidden');
+        els.gestureHint.style.display = 'none';
+        
+        // Pick question based on level (simplified logic: pick random from pool)
+        // Level 1: 0-2, Level 2: 3-5, Level 3: 6-8
+        let qStartIndex = (level - 1) * 3;
+        if (qStartIndex > 6) qStartIndex = 6;
+        const qIndex = qStartIndex + Math.floor(Math.random() * 3);
+        currentQuestion = questionBank[qIndex];
+
+        els.qLevel.innerText = level;
+        els.questionText.innerText = currentQuestion.q;
+        
+        els.optionsContainer.innerHTML = '';
+        currentQuestion.options.forEach((opt, index) => {
+            const btn = document.createElement('button');
+            btn.className = 'btn-option pointer-events-auto';
+            btn.innerText = opt;
+            btn.onclick = () => selectAnswer(index, btn);
+            els.optionsContainer.appendChild(btn);
+        });
+    }
+
+    function selectAnswer(index, btnEl) {
+        if (gameState !== 'question') return;
+        
+        selectedAnswerIndex = index;
+        
+        // Highlight selection briefly
+        const allBtns = document.querySelectorAll('.btn-option');
+        allBtns.forEach(b => b.disabled = true);
+        
+        if (index === currentQuestion.ans) {
+            btnEl.classList.add('correct');
+        } else {
+            btnEl.classList.add('wrong');
+            // Show correct one
+            allBtns[currentQuestion.ans].classList.add('correct');
+        }
+
+        setTimeout(() => {
+            els.questionOverlay.classList.add('hidden');
+            startBowlingPhase();
+        }, 1500);
+    }
+
+    function startBowlingPhase() {
+        gameState = 'readyToBowl';
+        els.gestureHint.style.display = 'block';
+        els.gestureHint.innerText = "Genggam ✊, Tarik Belakang, dan Lepas ✋ ke hadapan!";
+        isHandGrabbed = false;
+        handPositions = [];
+    }
+
+    function updateHUD() {
+        els.scoreDisplay.innerText = score;
+        els.levelDisplay.innerText = level;
+        els.timeDisplay.innerText = timeLeft;
+        
+        let hearts = '';
+        for(let i=0; i<3; i++) {
+            hearts += i < lives ? '❤️' : '🖤';
+        }
+        els.livesDisplay.innerText = hearts;
+    }
+
+    function endGame() {
+        gameState = 'gameover';
+        clearInterval(timerInterval);
+        
+        els.questionOverlay.classList.add('hidden');
+        els.gestureHint.style.display = 'none';
+        els.gameOverScreen.classList.remove('hidden');
+        
+        els.finalScore.innerText = score;
+        els.finalLevel.innerText = level;
+        
+        if (lives <= 0) {
+            els.endTitle.innerText = "KEHABISAN NYAWA";
+        } else if (timeLeft <= 0) {
+            els.endTitle.innerText = "MASA TAMAT";
+        }
+    }
+
+    window.onload = () => {
+        init3DEnvironment();
+        initMediaPipe();
+        
+        els.startBtn.addEventListener('click', startGame);
+        
+        els.restartBtn.addEventListener('click', () => {
+            els.gameOverScreen.classList.add('hidden');
+            startGame();
+        });
+    };
+
+</script>
+</body>
+</html>
